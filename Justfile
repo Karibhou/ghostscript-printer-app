@@ -150,30 +150,39 @@ verify-no-devel:
     [ -z "${bad}" ] || { echo "devel content in ${IMAGE}: ${bad}" >&2; exit 1; }
     echo "OK: no devel content in ${IMAGE}"
 
-# Check the shared and application-specific removal lists against the export.
+# Check the shared and application-specific removal lists against the export;
+# paths the element restores on purpose (`app-kept-paths`) are exempt.
 verify-slim:
     #!/usr/bin/env bash
     set -euo pipefail
     IMAGE="{{ image_ref }}"
     root="$(mktemp -d)"
     patterns="$(mktemp)"
+    kept_patterns="$(mktemp)"
     ctr=""
     cleanup() {
         [[ -z "${ctr}" ]] || podman rm "${ctr}" >/dev/null
         chmod -R u+rwX "${root}"
-        rm -rf "${root}" "${patterns}"
+        rm -rf "${root}" "${patterns}" "${kept_patterns}"
     }
     trap cleanup EXIT
-    just bst show --deps none --format '%{vars}' oci/ghostscript-printer-app.bst \
-      | python3 -c 'import sys, yaml; v = yaml.safe_load(sys.stdin); print(v["slim-printing-forbidden-paths"]); print(v["app-forbidden-paths"])' > "${patterns}"
+    vars="$(just bst show --deps none --format '%{vars}' oci/ghostscript-printer-app.bst)"
+    python3 -c 'import sys, yaml; v = yaml.safe_load(sys.stdin); print(v["slim-printing-forbidden-paths"]); print(v["app-forbidden-paths"])' <<< "${vars}" > "${patterns}"
+    python3 -c 'import sys, yaml; print(yaml.safe_load(sys.stdin)["app-kept-paths"])' <<< "${vars}" > "${kept_patterns}"
     ctr="$(podman create "${IMAGE}" /none)"
     podman export "${ctr}" | tar -C "${root}" -xf -
     shopt -s nullglob globstar
+    declare -A kept=()
+    while IFS= read -r pattern; do
+        [[ -n "${pattern}" ]] || continue
+        for match in "${root}"/${pattern}; do kept["${match}"]=1; done
+    done < "${kept_patterns}"
     bad=0
     while IFS= read -r pattern; do
         [[ -n "${pattern}" ]] || continue
         for match in "${root}"/${pattern}; do
             [[ -e "${match}" || -L "${match}" ]] || continue
+            [[ -z "${kept[${match}]:-}" ]] || continue
             echo "forbidden path in ${IMAGE}: ${match#"${root}"}" >&2
             bad=1
         done
