@@ -12,8 +12,44 @@ build-depends:
     config:
       location: /layer
 
+variables:
+  (@):
+    - fsdk-containers.bst:include/slim-printing.yml
+  app-forbidden-paths: |
+    usr/share/cups/ipptool
+    usr/bin/cupsd
+    usr/bin/ippeveprinter
+    etc/avahi/services/ssh.service
+    etc/avahi/services/sftp-ssh.service
+  # Shared-recipe removals this image still needs; restored after the gate,
+  # and exempted by `just verify-slim`. Each line must match a staged file.
+  # psicc: foo2zjs wrappers run it for ICC profiles (printer-app/foo2zjs.bst).
+  # libharfbuzz-subset: NEEDED by libpoppler and pdftops (cups-filters).
+  app-kept-paths: |
+    usr/bin/psicc
+    usr/lib/*/libharfbuzz-subset.so*
+
 config:
   commands:
+    - |
+      set -eu
+      shopt -s nullglob
+      mkdir -p /tmp/app-kept
+      cd /layer
+      while IFS= read -r pattern; do
+        [ -n "$pattern" ] || continue
+        matches=()
+        for match in $pattern; do
+          if [ -e "$match" ] || [ -L "$match" ]; then matches+=("$match"); fi
+        done
+        [ "${#matches[@]}" -gt 0 ] || { echo "app-kept-paths: nothing staged for $pattern" >&2; exit 1; }
+        cp -a --parents "${matches[@]}" /tmp/app-kept
+      done <<'KEEP'
+      %{app-kept-paths}
+      KEEP
+    - "%{slim-printing-commands}"
+    - "%{slim-printing-gate-commands}"
+    - cp -a /tmp/app-kept/. /layer/
     - |
       version="$(cat /metadata/VERSION)"
       install -d /layer/etc
