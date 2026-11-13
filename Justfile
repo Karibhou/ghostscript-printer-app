@@ -84,6 +84,10 @@ fetch:
 build:
     #!/usr/bin/env bash
     set -euo pipefail
+    # Fetch the shared printing runtime layer (issue #207) before building so
+    # elements/printer-app/runtime-parent.bst can stage its layout at /parent.
+    # Needs skopeo + cosign.
+    just prepare-parent
     just bst build oci/ghostscript-printer-app.bst
     just export
 
@@ -93,8 +97,26 @@ export:
     rm -rf .build-out
     just bst artifact checkout oci/ghostscript-printer-app.bst --directory /src/.build-out
     IMAGE_ID=$(podman pull -q oci:.build-out)
-    rm -rf .build-out
+    # Keep .build-out: releases publish this layout directly, since container
+    # storage may recompress layer 0 and break the shared digest.
     podman tag "$IMAGE_ID" "{{ image_ref }}"
+
+# Fetch the shared printing runtime layer (issue #207) before building.
+# Cosign verifies the signature, then skopeo writes the OCI layout to
+# runtime-parent/ for elements/printer-app/runtime-parent.bst to mount at
+# /parent. Needs skopeo + cosign.
+prepare-parent:
+    bash scripts/fetch-runtime-parent.sh
+
+# Layer 0 of the built image must be the shared runtime layer, byte for byte,
+# so families pinned to the same fsdk-containers ref share one download.
+check-shared-layer layout=".build-out":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    parent="$(skopeo inspect --raw oci:runtime-parent:layer | jq -r '.layers[0].digest')"
+    child="$(skopeo inspect --raw "oci:{{ layout }}" | jq -r '.layers[0].digest')"
+    echo "parent=${parent} child=${child}"
+    [[ "${parent}" == sha256:* && "${parent}" == "${child}" ]]
 
 verify-core:
     tests/core-appliance.sh

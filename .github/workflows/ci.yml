@@ -47,7 +47,7 @@ jobs:
         id: cache-key
         if: env.FULL_BUILD == 'true'
         env:
-          INPUTS_HASH: ${{ hashFiles('project.conf', 'elements/**', 'include/**', 'patches/**', 'files/**', 'Makefile', 'ghostscript-printer-app.c', 'ghostscript-printer-app.1', 'ghostscript-printer-app.service', 'testpage.ps', 'VERSION') }}
+          INPUTS_HASH: ${{ hashFiles('project.conf', 'elements/**', 'include/**', 'junction-files/**', 'patches/**', 'files/**', 'Makefile', 'ghostscript-printer-app.c', 'ghostscript-printer-app.1', 'ghostscript-printer-app.service', 'testpage.ps', 'VERSION') }}
         run: echo "inputs=${CACHE_PREFIX}${INPUTS_HASH}-" >> "$GITHUB_OUTPUT"
       - name: Restore BuildStream cache
         if: env.FULL_BUILD == 'true'
@@ -110,9 +110,27 @@ jobs:
           else
             echo "printing base seeded from ${ARCH}-${KEY}"
           fi
+      # Fetch the shared printing-runtime-layer parent and stage it at
+      # runtime-parent/ for elements/printer-app/runtime-parent.bst to mount at
+      # /parent (issue #207). Mirrors the doc's recipe: compute the key,
+      # cosign-verify the layer, then skopeo writes the OCI layout. The doc
+      # requires this to abort on any failed command (set -euo, no fallback):
+      # a partial or missing parent would silently break the shared-digest
+      # contract, so a fetch failure must fail the job.
+      - name: Fetch printing runtime layer parent
+        if: env.FULL_BUILD == 'true'
+        run: |
+          set -euo pipefail
+          just prepare-parent
       - name: Build image
         if: env.FULL_BUILD == 'true'
         run: just bst --config /src/ci/buildstream.conf --network-retries 5 build oci/ghostscript-printer-app.bst
+      - name: Verify the shared layer
+        if: env.FULL_BUILD == 'true'
+        run: |
+          set -euo pipefail
+          just bst --config /src/ci/buildstream.conf artifact checkout oci/ghostscript-printer-app.bst --directory .build-out
+          just check-shared-layer .build-out
       - name: Build and verify FSDK appliance
         if: env.FULL_BUILD == 'true'
         run: just verify
