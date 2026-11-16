@@ -8,8 +8,9 @@ The Prow catalog comes from `projectbluefin/.project/prow.yaml`, with repository
 in `.github/prow.yaml`. The empty `area` section excludes OS-image categories. Hive also
 uses labels outside that catalog; absence from Prow configuration does not make them unused.
 
-`needs-human` is the Hive agent opt-out. Issue templates apply it by default. A maintainer
-removes it only when an issue is accepted and agent-eligible; keep it for human-only work.
+`needs-human` is the Hive agent opt-out. Issue templates apply it by default, and the
+`issue-intake-opt-in.yml` workflow removes it at filing time unless the reporter chose
+"Human interaction only". Keep it for human-only work.
 
 The skills speak in terms of five triage roles. These are descriptive roles, not GitHub
 label names; use the Prow actions and assignment below.
